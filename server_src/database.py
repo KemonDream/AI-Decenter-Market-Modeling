@@ -22,14 +22,39 @@ class DatabaseManager:
         批量写入数据，使用事务加速。
         data_list: list of [timestamp, price]
         """
-        if not data_list: return 0
+        if not data_list:
+            return 0
+
+        # 🔥 Architecture fix: automatically parse possible string-encoded items
+        cleaned_data = []
+        for item in data_list:
+            if isinstance(item, str):
+                try:
+                    # restore string like "[123, 1.1]" to a real list [123, 1.1]
+                    import json
+
+                    parsed = json.loads(item)
+                    # ensure parsed is a 2-element sequence
+                    if isinstance(parsed, (list, tuple)) and len(parsed) >= 2:
+                        cleaned_data.append((parsed[0], parsed[1]))
+                except Exception:
+                    # skip malformed entries
+                    continue
+            else:
+                # accept list/tuple of length >=2 or 2-tuple
+                if isinstance(item, (list, tuple)) and len(item) >= 2:
+                    cleaned_data.append((item[0], item[1]))
+
+        if not cleaned_data:
+            return 0
+
         conn = self._get_conn()
         try:
             c = conn.cursor()
             c.execute("BEGIN TRANSACTION")
-            c.executemany("INSERT INTO ticks VALUES (?, ?)", data_list)
+            c.executemany("INSERT INTO ticks VALUES (?, ?)", cleaned_data)
             c.execute("COMMIT")
-            return len(data_list)
+            return len(cleaned_data)
         except Exception as e:
             print(f"❌ [Database] 写入失败: {e}")
             conn.rollback()
