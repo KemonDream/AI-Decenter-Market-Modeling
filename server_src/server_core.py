@@ -1,16 +1,21 @@
-"""Core server module that orchestrates database and model engine."""
-import socket
-import struct
+"""Core server module for business logic orchestration.
+
+Handles request processing, routing, and coordination with database and model.
+Network communication is delegated to socket_handler module.
+"""
 import config
-import threading
-import json
+from socket_handler import SocketHandler
 
 
 class ServerCore:
-    """Main server orchestrator for TradeBrain v1.0.
+    """Business logic orchestrator for TradeBrain v1.0.
     
-    Coordinates the database manager and model engine to provide
-    a unified interface for market prediction and data management.
+    Responsibilities:
+    - Request routing and processing
+    - Database and model coordination
+    - Business rule implementation
+    
+    Network communication is handled by SocketHandler.
     """
 
     def __init__(self, db, model):
@@ -22,125 +27,24 @@ class ServerCore:
         """
         self.db = db
         self.model = model
-        self.running = False
+        self.socket_handler = SocketHandler(request_processor=self.process_request)
 
     def start(self):
-        """Start the server and enter ready state with TCP listener."""
+        """Start the server with network listener."""
         print("🚀 [Server] ServerCore initialized and running.")
         print("📊 Database and Model ready for predictions.")
         
-        self.running = True
-        
-        # 创建 TCP 服务器 socket
-        server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        # 允许重用地址，避免 TIME_WAIT 导致的端口占用问题
-        server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        # 设置立即关闭选项，确保 socket 立即释放
-        # SO_LINGER: (1, 0) = 立即关闭并丢弃缓冲区数据
-        server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack('ii', 1, 0))
-        
-        try:
-            server_socket.bind((config.HOST, config.PORT))
-            server_socket.listen(5)
-            print(f"✅ Server listening on {config.HOST}:{config.PORT}")
-            
-            while self.running:
-                try:
-                    # 接受客户端连接 (阻塞操作)
-                    client_socket, addr = server_socket.accept()
-                    print(f"📱 New connection from {addr}")
-                    
-                    # 在线程中处理客户端请求
-                    client_thread = threading.Thread(
-                        target=self._handle_client,
-                        args=(client_socket, addr),
-                        daemon=True
-                    )
-                    client_thread.start()
-                    
-                except KeyboardInterrupt:
-                    print("\n⏸️  Server interrupted by user.")
-                    break
-                except OSError as e:
-                    if self.running:
-                        print(f"❌ [Server] Socket error: {e}")
-                    
-        except Exception as e:
-            print(f"❌ [Server] Error: {e}")
-        finally:
-            self.running = False
-            try:
-                server_socket.shutdown(socket.SHUT_RDWR)
-            except (OSError, ConnectionError):
-                # Socket 可能已经关闭，忽略异常
-                pass
-            finally:
-                server_socket.close()
-            print("🛑 Server stopped and port released.")
+        # Delegate network layer to SocketHandler
+        self.socket_handler.start(config.HOST, config.PORT)
 
-    def _handle_client(self, client_socket, addr):
-        """Handle individual client requests with JSON protocol.
-        
-        Protocol:
-        - FEED_DATA: Save market tick data
-        - PREDICT: Get price prediction
-        - TRAIN: Trigger model training
-        
-        Args:
-            client_socket: Connected client socket
-            addr: Client address tuple (ip, port)
-        """
-        print(f"🔗 [Server] 客户端已连接: {addr}")
-        buffer = ""
-        try:
-            while self.running:
-                # 接收客户端数据
-                data = client_socket.recv(config.BUFFER_SIZE).decode('utf-8')
-                if not data:
-                    break  # 客户端正常断开
-                
-                buffer += data
-                
-                # 处理缓冲区中的完整消息（以换行符分割）
-                while '\n' in buffer:
-                    msg_str, buffer = buffer.split('\n', 1)
-                    
-                    # 防御：过滤空行和空白字符
-                    msg_str = msg_str.strip()
-                    if not msg_str:
-                        continue
-                    
-                    try:
-                        # 解析 JSON 请求
-                        req = json.loads(msg_str)
-                        print(f"📨 Received from {addr}: {req}")
-                        
-                        # 路由不同的请求类型
-                        resp = self._process_request(req)
-                        
-                        # 发送 JSON 响应
-                        response_json = json.dumps(resp) + "\n"
-                        client_socket.sendall(response_json.encode('utf-8'))
-                        print(f"📤 Sent to {addr}: {resp}")
-                        
-                    except json.JSONDecodeError as e:
-                        # 脏数据处理：返回错误响应而不断开连接
-                        error_resp = {"status": "error", "msg": f"Invalid JSON: {str(e)}"}
-                        response_json = json.dumps(error_resp) + "\n"
-                        client_socket.sendall(response_json.encode('utf-8'))
-                        print(f"❌ JSON parse error from {addr}: {e}")
-                    
-        except Exception as e:
-            print(f"⚠️ [Server] 连接异常: {e}")
-        finally:
-            try:
-                client_socket.close()
-            except:
-                pass
-            print(f"🔌 [Server] 客户端断开: {addr}")
+    def stop(self):
+        """Stop the server gracefully."""
+        self.socket_handler.stop()
 
-    def _process_request(self, req):
-        """Process incoming request and dispatch to handlers.
+    def process_request(self, req):
+        """Process incoming request and dispatch to appropriate handler.
+        
+        This is the main entry point for business logic processing.
         
         Args:
             req: Dictionary with request type and parameters
@@ -223,6 +127,3 @@ class ServerCore:
             return result
         except Exception as e:
             return {"status": "error", "msg": str(e)}
-        finally:
-            client_socket.close()
-            print(f"🔌 Connection closed from {addr}")
