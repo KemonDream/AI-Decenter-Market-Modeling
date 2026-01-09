@@ -28,6 +28,7 @@ class ServerCore:
         self.db = db
         self.model = model
         self.socket_handler = SocketHandler(request_processor=self.process_request)
+        self.tick_buffer = []  # 维护价格窗口用于预测
 
     def start(self):
         """Start the server with network listener."""
@@ -82,38 +83,56 @@ class ServerCore:
     def _handle_predict(self, req):
         """Handle PREDICT request - get price prediction.
         
-        Expected format: {"type": "PREDICT", "price": <float>}
+        Expected format: {"type": "PREDICT", "price": <float>, "timestamp": <float>}
         """
         price = req.get('price')
+        timestamp = req.get('timestamp')
+        
         if price is None:
             return {"status": "error", "msg": "No price provided"}
         
-        # 简单逻辑：如果有足够数据则返回预测路径，否则等待
-        training_data = self.db.get_training_data(limit=config.INPUT_WINDOW)
+        if timestamp is None:
+            return {"status": "error", "msg": "No timestamp provided"}
         
-        if len(training_data) < config.INPUT_WINDOW:
+        # 维护价格窗口
+        self.tick_buffer.append(price)
+        if len(self.tick_buffer) > config.INPUT_WINDOW:
+            self.tick_buffer.pop(0)
+        
+        # 检查是否有足够的数据进行预测
+        if len(self.tick_buffer) < config.INPUT_WINDOW:
             return {
                 "type": "WAIT",
-                "msg": f"Insufficient data: {len(training_data)}/{config.INPUT_WINDOW}"
+                "msg": f"Insufficient data: {len(self.tick_buffer)}/{config.INPUT_WINDOW}"
             }
         
-        # 这里可以调用模型进行真实预测
-        # 现在返回 PATH 类型的模拟响应
-        return {
-            "type": "PATH",
-            "price": price,
-            "msg": "Prediction available"
-        }
+        # 调用模型进行预测
+        try:
+            path = self.model.predict(self.tick_buffer, timestamp)
+            if path is None:
+                return {
+                    "type": "WAIT",
+                    "msg": "Prediction failed"
+                }
+            
+            return {
+                "type": "PATH",
+                "price": price,
+                "path": path,
+                "msg": "Prediction available"
+            }
+        except Exception as e:
+            return {"status": "error", "msg": str(e)}
 
     def _handle_train(self, req):
         """Handle TRAIN request - trigger model training.
         
         Expected format: {"type": "TRAIN"}
         """
-        # 获取训练数据
-        training_data = self.db.get_training_data(limit=config.TRAIN_LIMIT)
+        # 获取训练数据（包含价格和时间戳）
+        raw_prices, raw_ts = self.db.get_training_data_with_ts(limit=config.TRAIN_LIMIT)
         
-        if len(training_data) < config.INPUT_WINDOW + config.TOTAL_PREDICT_TICKS:
+        if len(raw_prices) < config.INPUT_WINDOW + config.TOTAL_PREDICT_TICKS:
             return {
                 "status": "error",
                 "msg": "数据不足: 需要至少 {} 条数据".format(
@@ -121,9 +140,9 @@ class ServerCore:
                 )
             }
         
-        # 调用模型训练
+        # 调用模型训练（传入价格和时间戳）
         try:
-            result = self.model.train(training_data)
+            result = self.model.train(raw_prices, raw_ts)
             return result
         except Exception as e:
             return {"status": "error", "msg": str(e)}

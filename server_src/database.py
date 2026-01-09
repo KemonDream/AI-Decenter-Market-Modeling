@@ -71,3 +71,18 @@ class DatabaseManager:
         conn.close()
         # 数据库取出是倒序的(最新在钱)，转回正序
         return [r[0] for r in rows][::-1]
+
+    def get_training_data_with_ts(self, limit=100000):
+        """获取价格和时间戳，返回 (prices, timestamps) 元组"""
+        conn = self._get_conn()
+        c = conn.cursor()
+        # 同时取 timestamp 和 price
+        c.execute(f"SELECT timestamp, price FROM ticks ORDER BY timestamp DESC LIMIT {limit}")
+        rows = c.fetchall()
+        conn.close()
+        
+        # 数据库取出是倒序的(最新在前)，转回正序
+        rows = rows[::-1]
+        timestamps = [r[0] for r in rows]
+        prices = [r[1] for r in rows]
+        return prices, timestamps

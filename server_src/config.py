@@ -23,3 +23,9 @@ OUTPUT_STEPS = TOTAL_PREDICT_TICKS // PREDICT_STRIDE
 TRAIN_LIMIT = 500000      # 最大训练样本数
 BATCH_SIZE = 128
 EPOCHS = 5
+
+# --- Embedding 配置 (新) ---
+# 小时: 0-23 -> 映射为 4维向量
+EMBED_HOUR_DIM = 4  
+# 星期: 0-4  -> 映射为 2维向量
+EMBED_WEEK_DIM = 2
