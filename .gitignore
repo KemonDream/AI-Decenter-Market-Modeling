@@ -24,7 +24,8 @@ ENV/
 *~
 
 # Data and models
-data/
-*.keras
+# Note: Large files like *.db may need Git LFS
+# *.db
+# *.keras
 *.h5
 *.pkl
